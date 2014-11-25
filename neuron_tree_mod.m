@@ -109,7 +109,7 @@ luR   = length (uR);      % number of regions
 if isfield (tree, 'rnames'),
     rnames = tree.rnames (uR);
     for ward = 1 : length (uR),
-        rnames {ward} = uRn{ward};
+        rnames {ward} = uRn{uR(ward)};
     end
 else
     if luR == 1,
@@ -358,7 +358,7 @@ switch format
         fwrite (neuron, ['objref all', ...
             char(13), char(10)], 'char');
         for ward = 1 : luR,
-            fwrite (neuron, ['objref ' rlnames{ward}, ...
+            fwrite (neuron, ['objref ' rlnames{uR(ward)}, ...
                 char(13), char(10)], 'char');
         end
         fwrite (neuron, ['proc subsets() { local ward', ...
@@ -366,11 +366,11 @@ switch format
         fwrite (neuron, ['  all = new SectionList()', ...
             char(13), char(10)], 'char');
         for ward = 1 : luR,
-            fwrite (neuron, ['  ' rlnames{ward} ' = new SectionList()', ...
+            fwrite (neuron, ['  ' rlnames{uR(ward)} ' = new SectionList()', ...
                 char(13), char(10)], 'char');
             fwrite (neuron, ['  for ward = 0, ' num2str(H1 (ward) - 1) ' ' ...
                 rnames{ward} '[ward] {', char(13), char(10)], 'char');
-            fwrite (neuron, ['    ' rlnames{ward} '.append()', char(13), char(10)], 'char');
+            fwrite (neuron, ['    ' rlnames{uR(ward)} '.append()', char(13), char(10)], 'char');
             fwrite (neuron, ['    all.append()',   char(13), char(10)], 'char');
             fwrite (neuron, ['  }',                               char(13), char(10)], 'char');
         end
