@@ -80,14 +80,24 @@ classdef ncell
                 % Load tree from swc file:
                 obj.tree = load_tree(varargin{3});
                 obj.tree = ncell.fixRnames(obj.tree);
+                tmpRegs = unique(obj.tree.R);
+                % xxx BUG TERASTEIWN DIASTASEWN: kati paizei me to soma..
                 % disect soma:
-                obj.soma = obj.detectRegions(1);
+                if find(tmpRegs==1)
+                    obj.soma = obj.detectRegions(1);
+                end
                 % disect axon:
-                obj.axon = obj.detectRegions(2);
+                if find(tmpRegs==2) 
+                    obj.axon = obj.detectRegions(2);
+                end
                 % disect basal dendrites:
-                obj.dends = obj.detectRegions(3);
+                if find(tmpRegs==3) 
+                    obj.dends = obj.detectRegions(3);
+                end
                 % disect apical dendrites:
-                obj.apics = obj.detectRegions(4);
+                if find(tmpRegs==4) 
+                    obj.apics = obj.detectRegions(4);
+                end
                 
             end
             
@@ -109,6 +119,39 @@ classdef ncell
             number_of_spikes = length(spike_timing);
         end
         % Function to return branch IDXs and points
+%         function branches = detectRegions(obj,dendType)
+%             obj.tree = ncell.fixRnames(obj.tree);
+% %             Verify trees structure ( must be binary tree!):
+%             ver_tree (obj.tree);
+% %             Extract BCT:
+%             RAW_BTC = sum(full(obj.tree.dA),1) ;
+% %             trace backwards terminal/branch points to extract a tree
+% %             branch
+%             
+%             branches={};
+%             ctr=1;
+%             for i= find( [ ((RAW_BTC==0) | (RAW_BTC>1)) &...
+%                     (cellfun(@str2num,{obj.tree.rnames{obj.tree.R}}) == dendType) ] )
+% 
+% %                 Slow recursion
+%                 branch = struct();
+% %                 Add the terminal node to the list:
+%                 branch(1).id= i;
+%                 branch(1).x = obj.tree.X(i);
+%                 branch(1).y = obj.tree.Y(i);
+%                 branch(1).z = obj.tree.Z(i);
+%                 branch(1).d = obj.tree.D(i);
+% %                         Recursively add the rest of the terminal branch nodes:
+%                 branch = obj.recursionIn(branch,i);
+%                 branches(ctr) = {branch(:)};
+%                 ctr = ctr+1;
+%             end
+%             
+% %             if region is soma, exclude the root node!
+%             if(dendType == 1)
+%                 branches(1) = [];
+%             end
+%         end
         function branches = detectRegions(obj,dendType)
             obj.tree = ncell.fixRnames(obj.tree);
             % Verify trees structure ( must be binary tree!):
@@ -120,25 +163,35 @@ classdef ncell
             
             branches={};
             ctr=1;
+            Parents = ipar_tree(obj.tree);
+            AL = len_tree(obj.tree);
             for i= find( [ ((RAW_BTC==0) | (RAW_BTC>1)) &...
                     (cellfun(@str2num,{obj.tree.rnames{obj.tree.R}}) == dendType) ] )
-                
-                branch = struct();
-                %Add the terminal node to the list:
-                branch(1).id= i;
-                branch(1).x = obj.tree.X(i);
-                branch(1).y = obj.tree.Y(i);
-                branch(1).z = obj.tree.Z(i);
-                branch(1).d = obj.tree.D(i);
-                %         Recursively add the rest of the terminal branch nodes:
-                branch = obj.recursionIn(branch,i);
+                               
+                iPar = unique([i,Parents(i,:)],'stable');
+%                 iPar = [i,Parents(i,:)];
+                iPar = iPar(iPar~=0);
+                % if region contains only root, exclude it!
+                if length(iPar) == 1
+                    continue;
+                end
+                stopIdx = find(  RAW_BTC(iPar(2:end))>1 ) +1;
+%                 if (stopIdx(1)==1) || (isempty(stopIdx))
+%                     continue;
+%                 else
+                    iPar = iPar(1:stopIdx(1));
+%                 end
+                branch = repmat(struct('id',[],'x',[],'y',[],'z',[],'d',[],'l',[]), length(iPar),1);
+                for l=1:length(iPar)
+                    branch(l).id= iPar(l);
+                    branch(l).x = obj.tree.X(iPar(l));
+                    branch(l).y = obj.tree.Y(iPar(l));
+                    branch(l).z = obj.tree.Z(iPar(l));
+                    branch(l).d = obj.tree.D(iPar(l));
+                    branch(l).l = AL(iPar(l));
+                end
                 branches(ctr) = {branch(:)};
                 ctr = ctr+1;
-            end
-            
-            % if region is soma, exclude the root node!
-            if(dendType == 1)
-                branches(1) = [];
             end
         end
         function branch = recursionIn(obj,branch,idx)
@@ -231,6 +284,7 @@ classdef ncell
             subtreeXYZ = [subtree.X(1), subtree.Y(1), subtree.Z(1)];
             
             obj.tree = cat_tree(obj.tree,tran_tree(subtree,somaXYZ-subtreeXYZ),1,1);
+            obj.tree = elim0_tree(obj.tree);
             
             % Update properties:
             % disect soma:
@@ -293,6 +347,11 @@ classdef ncell
                 %                 obj.tree = ncell.fixRoot(obj.tree);
             end
             
+            % IMPORTANT: delete the intermediate branches created by
+            % fixRoot()
+            obj.tree = elim0_tree(obj.tree);
+%             subtree = ncell.fixRoot(subtree);
+            
             % Update properties:
             % disect soma:
             obj.soma = obj.detectRegions(1);
@@ -305,15 +364,28 @@ classdef ncell
             
         end
         function brkState = isBroken(obj)
+            % If returns one if one or more nodes are missing their parrents:
             tmp = sum(full(obj.tree.dA),2);
-            brkState = all(tmp(2:end)) ;
+            % exclude first node that has no parent:
+            brkState = ~all(tmp(2:end)) ;
+        end
+        function maxfurc = maxBranching(obj)
+            % Return broken state of morphology:
+            % returned int indicates the max tri(and up)-furcations
+            % in the morphology. So 'normal' state is brkState==1 (soma).
+            % More trifurcations might indicate that something went wrong.
+            % the tools to check the morphology for errors are incomplete
+            % or non existent.
+            maxfurc = max(sum(full(obj.tree.dA),1)) ;
         end
         function obj = hasPersistent(obj,stim,freq,dur)
             %returns true if responce similars persistent activity
             %duration in ms
             %IGNORES the stimulus duration!
+            %Pontiako implementation.. Logika, prwta briskeis ta spikes mia fora kai
+            %meta dokimazeis gia ka8e para8yro poia briskontai mesa (dah)
             for i=stim:obj.tstop - dur
-                if( (spike_count(obj,i,i+dur)/ ((obj.tstop - dur)/1000)) >= freq )
+                if( (spike_count(obj,i,i+dur)/ ((dur)/1000)) >= freq )
                     obj.persistentActivity = 1;
                     return;
                 end
@@ -330,55 +402,61 @@ classdef ncell
             end
             obj.stBins = histc(obj.spikes,1:binSize:(obj.tstop*obj.dt));
         end
-        function meanMEP = measureMEP(obj,rm,ra)
+        function meanMEP = dendMEP(obj,sID,rm_s, rm_e,ra,rm_dhalf,rm_steep, varargin)
             % Function that scans for terminal nodes in adjacency matrix 
             % and recursively falls back to the soma, computing mean MEP.
             % As in:
             % Impact of Dendritic Size and Dendritic Topology on Burst
             % Firing in Pyramidal Cells, Van Ooyen, 2010
+            % sID : compute mean MEP for a swc section (soma,axon,dend,etc)
             
-            MEP = @(b, rm, ra)sqrt(((b/2)*rm)/(2*ra));
-            
+            MEP = @(l, b, rm, ra)l/sqrt(((b/2)*rm)/(2*ra));
+            rm_sig = @(rm_s, rm_e, dh, st, dist)rm_s + (rm_e - rm_s)/(1.0 + exp((dh-dist)/st));
             
             branches={};
             ctr = 1;
-            terms = find( (sum(full(obj.tree.dA))==0) & (cellfun(@str2num,{obj.tree.rnames{obj.tree.R}}) ~= 1) )
-            for i=find(sum(full(obj.tree.dA))==0)
-                %            Add the terminal node to the list:
-                branch = struct();
-                 %Add the terminal node to the list:
-                branch(1).id= i;
-                branch(1).MEP = MEP(obj.tree.D(i),rm,ra);
+            iC = find(cellfun(@str2num,{obj.tree.rnames{obj.tree.R}}) == sID); %Total number of compartmets of interest
+            mC = length(iC);
+            dist_tmp = Pvec_tree(obj.tree);
+            if nargin > 7
+                RMs = repmat(rm_s/1.5,[mC,1]); %xxx
+            else
+                RMs = arrayfun(rm_sig, repmat(rm_s,[mC,1]), repmat(rm_e,[mC,1]), repmat(rm_dhalf,[mC,1]), repmat(rm_steep,[mC,1]),dist_tmp(iC)) ;%rm_sig(rm_s, rm_e, rm_dhalf, rm_steep, dist_tmp(i));
+            end
+            AL = len_tree(obj.tree);
+            Diam = obj.tree.D;
+            Parents = ipar_tree(obj.tree);
+            % Calculate MEP for all the compartments of interest (to avoid
+            % recomputation for some compartments:
+            MEPs = arrayfun(MEP, AL(iC), Diam(iC), RMs, repmat(ra,[mC,1]));
+                
+            terms = find( (sum(full(obj.tree.dA))==0) & (cellfun(@str2num,{obj.tree.rnames{obj.tree.R}}) == sID) );
+            for i=terms %find(sum(full(obj.tree.dA))==0)
                 %         Recursively add the rest of the terminal branch nodes:
-                branch = obj.recursionMEP(MEP,branch,i,rm,ra);
+                % EDIT: avoid recursion for it is to slow in Matlab:
+%                 branch = obj.recursionMEP(MEP,rm_sig,branch,i,rm_s,
+%                 rm_e,ra);
+                iPar = unique([i,Parents(i,:)],'first');
+                iPar = iPar(iPar~=0);
+                %preallocate for speed:
+                branch = repmat(struct('id',[],'MEP',[]),length(iPar),1);
+                for l=1:length(iPar)
+                    branch(l).id = iPar(l);
+                    branch(l).MEP = MEPs( iC==iPar(l) );
+                end
                 branches(ctr) = {branch(:)};
                 ctr = ctr+1;
             end
-            meanMEP = mean(cellfun(@(x) x.MEP, branches));
+%             meanMEP = mean(cellfun(@(x) x.MEP, branches));
+              meanMEP = mean(cellfun(@(cb) mean(cell2mat(arrayfun(@(x) x.MEP, cb,'uniformoutput',false))), branches))
         end
-        function branch = recursionMEP(obj,MEP,branch,idx,rm,ra)
-            %     Add the index of the parent node;
-            tmpIdx = find(obj.tree.dA(idx,:) );
-            tmpLoc = size(branch,2)+1;
-            branch(tmpLoc).id=tmpIdx;
-            branch(tmpLoc).MEP = MEP(obj.tree.D(tmpIdx),rm,ra);
-
-            %     If the parent is continuoum point, continue the recursion:
-            if branch(end).id ~= 1 
-                branch = obj.recursionMEP(MEP,branch,branch(end).id,rm,ra);
-            else
-                %     If the parent is bifurcation, STOP
-                return;
-            end
-        end
-        
     end
     
     methods (Static)
         function tree = fixRnames(subtree)
             insert = @(a, x, n)cat(2,  x(1:n), a, x(n+1:end));
             rnums = cellfun(@(x) str2num(x),subtree.rnames);
-            for i=1:4
+            for i=1:3
                 if(~(rnums(i)==i))
                     rnums=insert(i,rnums,i-1);
                     tmpR = find(cellfun(@(x) str2num(x),subtree.rnames((subtree.R))) >= i) ;
@@ -417,16 +495,77 @@ classdef ncell
                 len{i} = ltmp;
             end
         end
-        function diam = regionDiameter(reg)
+        function diam = regionDiameter(reg,nseg)
             % region is a cell of structures containing segments
-            for i=1:length(reg)
-                for t=1:length(reg{i})-1
+            for i=1:length(reg) % No of sections
+                for t=1:length(reg{i})-1 %No of pt3d
                     dtmp(t) = reg{i}(t).d; % is norm() the same?
+                    ltmp(t) = reg{i}(t).l;
                 end
-                diam{i} = dtmp;
+                % As in NEURON source code:
+                diam(i) = sum((dtmp(1:end-1) + dtmp(2:end)) .* ltmp(1:end-1)) * 0.5 / (sum(ltmp(1:end-1))/nseg) ;
+%                 diam{i} = dtmp;
             end
+
+%             if nvarg < 2
+%                 diam=cellfun(@(as) arrayfun(@(f) f.d,as,'uniformoutput',false),reg,'uniformoutput',false);
+%                 % remove the last diam as is the parent's diam
+%                 
+%             else
+%                 
+%             end
         end
+        
     end
     
 end
 
+% function meanMEP = dendMEP(obj,sID,rm_s, rm_e,ra,rm_dhalf,rm_steep)
+%             % Function that scans for terminal nodes in adjacency matrix 
+%             % and recursively falls back to the soma, computing mean MEP.
+%             % As in:
+%             % Impact of Dendritic Size and Dendritic Topology on Burst
+%             % Firing in Pyramidal Cells, Van Ooyen, 2010
+%             % sID : compute mean MEP for a swc section (soma,axon,dend,etc)
+%             
+%             MEP = @(l, b, rm, ra)l/sqrt(((b/2)*rm)/(2*ra));
+%             rm_sig = @(rm_s, rm_e, dh, st, dist)rm_s + (rm_e - rm_s)/(1.0 + exp((dh-dist)/st));
+%             
+%             branches={};
+%             ctr = 1;
+%             terms = find( (sum(full(obj.tree.dA))==0) & (cellfun(@str2num,{obj.tree.rnames{obj.tree.R}}) == sID) );
+%             for i=terms%find(sum(full(obj.tree.dA))==0)
+%                 %            Add the terminal node to the list:
+%                 branch = struct();
+%                  %Add the terminal node to the list:
+%                 branch(1).id= i;
+%                 dist_tmp = Pvec_tree(obj.tree);
+% %                 rm=rm_sig(rm_s, rm_e, rm_dhalf, rm_steep, dist_tmp(i));
+%                 rm = 1.5/rm_s; %xxx
+%                 branch(1).MEP = MEP(obj.tree.D(i),rm,ra);
+%                 %         Recursively add the rest of the terminal branch nodes:
+%                 branch = obj.recursionMEP(MEP,rm_sig,branch,i,rm_s, rm_e,ra);
+%                 branches(ctr) = {branch(:)};
+%                 ctr = ctr+1;
+%             end
+%             meanMEP = mean(cellfun(@(x) x.MEP, branches));
+%         end
+%         function branch = recursionMEP(obj,MEP,rm_sig,branch,idx,rm_s, rm_e,ra)
+%             %     Add the index of the parent node;
+%             tmpIdx = find(obj.tree.dA(idx,:) );
+%             tmpLoc = size(branch,2)+1;
+%             branch(tmpLoc).id=tmpIdx;
+%             dist_tmp = Pvec_tree(obj.tree);
+%             rm=rm_sig(rm_s, rm_e, 10, 5, dist_tmp(tmpIdx));
+%             branch(tmpLoc).MEP = MEP(obj.tree.D(tmpIdx),rm,ra);
+% 
+%             %     If the parent is continuoum point, continue the recursion:
+%             tmpBO = BO_tree(obj.tree);
+%             if tmpBO(branch(end).id) >= sum(cellfun(@str2num,{obj.tree.rnames{obj.tree.R}}) == 1)
+%                 branch = obj.recursionMEP(MEP,rm_sig,branch,branch(end).id,rm_s, rm_e,ra);
+%             else
+%                 %     If the parent is bifurcation, STOP
+%                 return;
+%             end
+%         end
+        
